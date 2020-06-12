@@ -1,0 +1,6 @@
+.clangd
+build
+gen.cpp
+hook.cpp
+compile_commands.json
+
