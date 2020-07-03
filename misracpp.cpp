@@ -37,6 +37,16 @@ using namespace std;
 
 namespace {
 
+clang::LangOptions lopt;
+
+std::string decl2str(SourceManager *sm, clang::Decl *d) {
+    clang::SourceLocation b(d->getBeginLoc()), _e(d->getEndLoc());
+    clang::SourceLocation e(clang::Lexer::getLocForEndOfToken(_e, 0, *sm, lopt));
+    auto ret = std::string(sm->getCharacterData(b), sm->getCharacterData(e)-sm->getCharacterData(b));
+    for (int i = 0;i < ret.length(); i++) if (ret[i] == '\n') ret[i] = ' ';
+    return ret;
+    
+}
 class MyVisitor : public RecursiveASTVisitor<MyVisitor> {
 public:
     explicit MyVisitor(ASTContext* Context) : Context(Context) {}
@@ -44,80 +54,101 @@ public:
         /*if (FD->getFirstDecl()->isStatic() && !FD->isStatic()) {
             FD->dump();
         }*/
+
+        auto &SourceManager = Context->getSourceManager();
+
         stringstream ss;
         string functionName = FD->getNameAsString();
         size_t paramSize = FD->param_size();
-
-        ss << "cudnnStatus_t CUDNNWINAPI " << functionName << "(";
-
+        string returnArg = FD->getReturnType().getAsString();
+        
+        ss << "{ \"name\": \"" << functionName << "\",";
+        ss << "  \"return_type\": \"" << returnArg << "\",";
+        ss << "  \"parameters\": [";
         vector<pair<string, string>> params;
         for(size_t i = 0; i < paramSize; i++){
             ParmVarDecl* param = FD->getParamDecl(i);
             auto type = param->getType().getAsString();
+            auto fullparam = decl2str(&SourceManager, param);
             auto name = param->getNameAsString();
-            ss << type << " " << name;
+            ss << "{ \"full\": \"" << fullparam << "\", ";
+            ss << "  \"analysed\": [\"" << type << "\", \"" << name << "\"] } ";
             params.push_back(make_pair(type, name));
 
             if(i < paramSize - 1) ss << ", ";
         }
-        ss << ")"; 
+        ss << "] }";
+
+        // ss << "cudnnStatus_t CUDNNWINAPI " << functionName << "(";
+
+        // vector<pair<string, string>> params;
+        // for(size_t i = 0; i < paramSize; i++){
+        //     ParmVarDecl* param = FD->getParamDecl(i);
+        //     auto type = param->getType().getAsString();
+        //     auto name = param->getNameAsString();
+        //     ss << type << " " << name;
+        //     params.push_back(make_pair(type, name));
+
+        //     if(i < paramSize - 1) ss << ", ";
+        // }
+        // ss << ")"; 
         
 
-        ss << "{\n";
-        ss << "\t" << "PRINT(\"Enter " << functionName << "\\n\");\n";                                             
-        ss << "\t" << "typedef decltype(&" << functionName << ") funcType;\n";    
-        ss << "\t" << "funcType func = (funcType) actualDlsym(libcudnnHandle, STRINGIFY(" << functionName << "));\n";    
-        ss << "\t" << "fromCudnnApiName(STRINGIFY(" << functionName << "));\n";
+        // ss << "{\n";
+        // ss << "\t" << "PRINT(\"Enter " << functionName << "\\n\");\n";                                             
+        // ss << "\t" << "typedef decltype(&" << functionName << ") funcType;\n";    
+        // ss << "\t" << "funcType func = (funcType) actualDlsym(libcudnnHandle, STRINGIFY(" << functionName << "));\n";    
+        // ss << "\t" << "fromCudnnApiName(STRINGIFY(" << functionName << "));\n";
         
-        ss << "\n";
+        // ss << "\n";
 
-        for(size_t i = 0; i < params.size(); i++){
-            auto the = params[i];
-            string typeName = "";
-            if(the.first == "const void *"){
-                typeName = "Input";
-            }else if (the.first == "void *"){
-                typeName = "Output";
-            } 
+        // for(size_t i = 0; i < params.size(); i++){
+        //     auto the = params[i];
+        //     string typeName = "";
+        //     if(the.first == "const void *"){
+        //         typeName = "Input";
+        //     }else if (the.first == "void *"){
+        //         typeName = "Output";
+        //     } 
 
-            //llvm::outs() << "-\t" << the.second  << " "  << typeName << "\n";
-            if (typeName.length() > 0){
-                for(size_t j = 0; j < params.size(); j++){
-                    auto rel = params[j];
-                    int declLoc = rel.first.find("Descriptor_t");
-                    int cudnnLoc = rel.first.find("cudnn");
+        //     //llvm::outs() << "-\t" << the.second  << " "  << typeName << "\n";
+        //     if (typeName.length() > 0){
+        //         for(size_t j = 0; j < params.size(); j++){
+        //             auto rel = params[j];
+        //             int declLoc = rel.first.find("Descriptor_t");
+        //             int cudnnLoc = rel.first.find("cudnn");
 
-                    if(i != j && declLoc != string::npos){
-                        size_t camelLoc = 0;
-                        while(camelLoc < rel.second.length() && !isupper(rel.second[camelLoc])) camelLoc++;
-                        string firstCamel = rel.second.substr(0, camelLoc);
-                        //llvm::outs() << "-\t" << firstCamel << "\n"; 
+        //             if(i != j && declLoc != string::npos){
+        //                 size_t camelLoc = 0;
+        //                 while(camelLoc < rel.second.length() && !isupper(rel.second[camelLoc])) camelLoc++;
+        //                 string firstCamel = rel.second.substr(0, camelLoc);
+        //                 //llvm::outs() << "-\t" << firstCamel << "\n"; 
 
-                        size_t compare = 0;
-                        while(compare < min(firstCamel.length(), the.second.length()) &&
-                              firstCamel[compare] == the.second[compare]) compare++;
-                        if(compare == firstCamel.length()){
-                            size_t declTypeLen = declLoc - (cudnnLoc + 5);
-                            string declTypeName = rel.first.substr(cudnnLoc + 5, declTypeLen);
-                            ss << "\t" << "fromCudnn" << typeName << declTypeName << "(" << rel.second << ", " << the.second << ");\n";
-                        }
-                    }
-                }
-            }
-        }
+        //                 size_t compare = 0;
+        //                 while(compare < min(firstCamel.length(), the.second.length()) &&
+        //                       firstCamel[compare] == the.second[compare]) compare++;
+        //                 if(compare == firstCamel.length()){
+        //                     size_t declTypeLen = declLoc - (cudnnLoc + 5);
+        //                     string declTypeName = rel.first.substr(cudnnLoc + 5, declTypeLen);
+        //                     ss << "\t" << "fromCudnn" << typeName << declTypeName << "(" << rel.second << ", " << the.second << ");\n";
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
-        ss << "\n";
+        // ss << "\n";
 
-        ss << "\t" << "cudnnStatus_t ret = func(";
-        for(size_t i = 0; i < params.size(); i++){
-            auto the = params[i];
-            ss << the.second;
-            if(i < paramSize - 1) ss << ", ";
-        }
-        ss << ");\n";
-        ss << "\treturn ret;\n";
+        // ss << "\t" << "cudnnStatus_t ret = func(";
+        // for(size_t i = 0; i < params.size(); i++){
+        //     auto the = params[i];
+        //     ss << the.second;
+        //     if(i < paramSize - 1) ss << ", ";
+        // }
+        // ss << ");\n";
+        // ss << "\treturn ret;\n";
         
-        ss << "}\n";
+        // ss << "}\n";
 
 
         llvm::outs() << ss.str() << "\n";

@@ -1,6 +1,7 @@
+.*
 .clangd
 build
-gen.cpp
+gen*
 hook.cpp
 compile_commands.json
 
